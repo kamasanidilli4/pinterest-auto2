@@ -378,8 +378,8 @@ def create_pinterest_image(product: dict, custom_headline: str, custom_layout: s
 
 # ─── PINTEREST POSTER ────────────────────────────────────────────────────────
 
-def post_to_pinterest(product: dict, headline: str, custom_layout: str = None, custom_theme_idx: int = None) -> bool:
-    """Create a pin on the amazon deals board."""
+def post_to_pinterest(product: dict, headline: str, custom_layout: str = None, custom_theme_idx: int = None) -> tuple:
+    """Create a pin on the amazon deals board. Returns (success_bool, error_message)."""
     print("\n📌 Connecting to Pinterest...")
     pinterest = Pinterest(
         email=PINTEREST_EMAIL,
@@ -398,10 +398,10 @@ def post_to_pinterest(product: dict, headline: str, custom_layout: str = None, c
         f"#AmazonDeals #AmazonFinds #Shopping #Deal"
     )
 
-    if not product["image_url"] and not product.get("video_url"):
+    if not product["image_url"] and not product.get("video_url") and not product.get("local_media_path"):
         print("❌ Could not find product image or video. Pinterest needs media.")
         print("   Try a different Amazon product link.")
-        return False
+        return False, "Could not find product image or media."
 
     print(f"\n📦 Product  : {product['title']}")
     print(f"💰 Price    : {product['price'] or 'N/A'}")
@@ -412,22 +412,14 @@ def post_to_pinterest(product: dict, headline: str, custom_layout: str = None, c
     print(f"\n📌 Posting to Pinterest board '{BOARD_ID}'...")
 
     image_path = None
-    if product.get('video_url'):
-        print("   🎥 Downloading Video from Amazon...")
-        try:
-            resp = requests.get(product["video_url"], stream=True, timeout=20)
-            resp.raise_for_status()
-            out_path = os.path.join(os.getcwd(), "downloaded_video.mp4")
-            with open(out_path, 'wb') as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            image_path = out_path
-            print("   ✅ Video downloaded. Attempting to upload to Pinterest...")
-        except Exception as e:
-            print(f"   ⚠️ Could not download video: {e}")
-            
-    if not image_path:
-        # We always generate the pin (edit the image) as requested if there is no video
+    
+    # Check if user uploaded custom media
+    if product.get('local_media_path'):
+        image_path = product['local_media_path']
+        print(f"   📂 Using custom uploaded media: {image_path}")
+    else:
+        # We always generate the pin (infographic) instead of uploading raw video
+        # because py3pin upload-image endpoint does not support .mp4 files!
         image_path = create_pinterest_image(product, headline, custom_layout, custom_theme_idx)
 
     try:
@@ -444,14 +436,15 @@ def post_to_pinterest(product: dict, headline: str, custom_layout: str = None, c
             print(f"\n✅ Pin posted successfully!")
             print(f"   Pin ID : {result['id']}")
             print(f"   View   : https://pinterest.com/pin/{result['id']}/")
-            return True
+            return True, result['id']
         else:
-            print(f"⚠️  Unexpected response: {result}")
-            return False
+            err_msg = str(response.json()) if response else "Unknown error"
+            print(f"⚠️  Unexpected response: {err_msg}")
+            return False, f"Unexpected response from Pinterest: {err_msg}"
 
     except Exception as e:
         print(f"❌ Pinterest error: {e}")
-        return False
+        return False, f"Pinterest error: {str(e)}"
 
 
 # ─── MAIN ────────────────────────────────────────────────────────────────────
@@ -490,7 +483,7 @@ def main():
             continue
 
         # Post
-        success = post_to_pinterest(product, headline)
+        success, err = post_to_pinterest(product, headline)
 
         if success:
             print("\n▶ Post another? (paste next URL or type 'quit')")
