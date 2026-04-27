@@ -19,10 +19,12 @@ try:
     import PIL
     import selenium
     import webdriver_manager
+    from curl_cffi import requests as cffi_requests
 except ImportError:
-    print("Installing required packages (beautifulsoup4, pillow, selenium, webdriver-manager)...")
-    subprocess.run([sys.executable, "-m", "pip", "install", "beautifulsoup4", "pillow", "selenium", "webdriver-manager", "--quiet"])
+    print("Installing required packages (beautifulsoup4, pillow, selenium, webdriver-manager, curl_cffi)...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "beautifulsoup4", "pillow", "selenium", "webdriver-manager", "curl_cffi", "--quiet"])
     print("✓ Installed. Proceeding...")
+    from curl_cffi import requests as cffi_requests
 
 import re
 import time
@@ -61,11 +63,11 @@ HEADERS = {
 
 def resolve_url(url: str) -> str:
     """Follow redirects for short links (amzn.to, amzn.in, etc.) and strip tracking params."""
-    # If it's a short link, follow redirect to get real URL
     if any(x in url for x in ["amzn.to", "amzn.in", "amzn.eu", "a.co"]):
         print(f"   🔗 Resolving short link...")
         try:
-            resp = requests.head(url, headers=HEADERS, allow_redirects=True, timeout=10)
+            # Use curl_cffi to seamlessly bypass any intermediate bot checks
+            resp = cffi_requests.get(url, impersonate="chrome", allow_redirects=True, timeout=15)
             url = resp.url
             print(f"   ➜  {url[:80]}...")
         except Exception as e:
@@ -75,51 +77,42 @@ def resolve_url(url: str) -> str:
     match = re.search(r"(https?://(?:www\.)?amazon\.[a-z.]+/(?:[^/]+/)?dp/[A-Z0-9]{10})", url)
     if match:
         return match.group(1)
+        
+    match_gp = re.search(r"(https?://(?:www\.)?amazon\.[a-z.]+/(?:[^/]+/)?gp/product/[A-Z0-9]{10})", url)
+    if match_gp:
+        return match_gp.group(1)
+        
     return url.split("?")[0]  # fallback: strip query string
 
 
 def scrape_amazon_product(url: str) -> dict:
-    """Scrape product title, image, price and description from Amazon using Selenium."""
+    """Scrape product title, image, price and description from Amazon using robust TLS spoofing."""
     resolved_url = resolve_url(url)
     print(f"\n🔍 Scraping: {resolved_url}")
 
-    from selenium import webdriver
-    from selenium.webdriver.chrome.service import Service as ChromeService
-    from selenium.webdriver.chrome.options import Options
-    try:
-        from webdriver_manager.chrome import ChromeDriverManager
-    except ImportError:
-        import subprocess, sys
-        subprocess.run([sys.executable, "-m", "pip", "install", "webdriver-manager", "--quiet"])
-        from webdriver_manager.chrome import ChromeDriverManager
-
-    options = Options()
-    options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("user-agent=" + HEADERS["User-Agent"])
-
     html = ""
-    try:
-        service = ChromeService(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(30)
-        driver.get(resolved_url)
-        import time
-        time.sleep(5) # Wait for page to render
-        html = driver.page_source
-        driver.quit()
-    except Exception as e:
-        print(f"❌ Failed to fetch page via Selenium: {e}")
-        print("🔄 Trying fallback with requests...")
+    # We will try up to 3 times to get past Amazon's bot detection
+    for attempt in range(1, 4):
         try:
-            resp = requests.get(resolved_url, headers=HEADERS, timeout=15)
+            # Using curl_cffi with impersonate="chrome" perfectly mocks a real browser's TLS signature
+            resp = cffi_requests.get(resolved_url, impersonate="chrome", timeout=15)
             html = resp.text
-        except Exception as req_err:
-            print(f"❌ Fallback failed: {req_err}")
-            return None
+            soup = BeautifulSoup(html, "html.parser")
+            
+            # Check if we hit a captcha
+            title_tag = soup.find("title")
+            if title_tag and "Robot Check" in title_tag.text:
+                print(f"   ⚠️ CAPTCHA detected on attempt {attempt}. Retrying...")
+                time.sleep(2)
+                continue
+                
+            # Quick check if it loaded properly
+            if soup.find("span", id="productTitle") or soup.find("h1", id="title"):
+                break # Success!
+                
+        except Exception as e:
+            print(f"   ❌ Fetch error on attempt {attempt}: {e}")
+            time.sleep(2)
 
     soup = BeautifulSoup(html, "html.parser")
 
