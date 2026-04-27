@@ -2,4 +2,5 @@ beautifulsoup4
 requests-toolbelt
 selenium >= 4.6.0
 webdriver-manager
+curl_cffi
 gunicorn
