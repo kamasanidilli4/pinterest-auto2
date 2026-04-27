@@ -405,7 +405,7 @@ def generate():
         requests.get = local_get
         
         # Execute poster creation
-        success = post_to_pinterest(product, headline, layout, theme)
+        success, err_msg = post_to_pinterest(product, headline, layout, theme)
         
         requests.get = original_get
         
@@ -415,7 +415,7 @@ def generate():
                 "url": "https://pinterest.com/kdkr666/amazon-deals/"
             })
         else:
-            return jsonify({"success": False, "error": "Failed to upload to Pinterest. Check console."})
+            return jsonify({"success": False, "error": f"Failed to upload: {err_msg}"})
 
     except Exception as e:
         return jsonify({"success": False, "error": f"Posting error: {str(e)}"})
